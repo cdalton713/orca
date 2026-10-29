@@ -25,6 +25,8 @@ export type IdleAgentTurnEvidence = {
   /** Ignore status from turns before this prompt. */
   sentAt: number
   tail: readonly string[]
+  /** Output scoped at dispatch, never a retained pane preview. */
+  launchTail?: readonly string[] | null
   /** Read only when no fresh `done` decides it: the names the agent command may run under. */
   readAgentCommands: () => readonly string[]
 }
@@ -95,7 +97,7 @@ export function judgeIdleAgentTurn(
   }
   // Fresh status proves the agent passed bootstrap; retained status cannot date old screen output.
   if (rows.length === 0 && commands.some((command) => command.split(/\s+/)[0] === 'codex')) {
-    const bootstrapFailureLine = findCodexBootstrapFailure(evidence.tail)
+    const bootstrapFailureLine = findCodexBootstrapFailure(evidence.launchTail ?? [])
     if (bootstrapFailureLine) {
       return { kind: 'failed', reason: 'codex-bootstrap', bootstrapFailureLine }
     }

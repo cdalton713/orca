@@ -1,3 +1,5 @@
+import { RecentPtyOutputBuffer } from '../runtime/recent-pty-output-buffer'
+import { normalizeTerminalChunk } from '../runtime/terminal-ansi-normalization'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentStatusState } from '../../shared/agent-status-types'
 import type { AutomationRun } from '../../shared/automations-types'
@@ -24,11 +26,17 @@ function createPane(initial: { idle: boolean; tail: string[]; idleEdgeOnly?: boo
   // Model runtimes that satisfy tui-idle only once per idle edge.
   let edgeSpent = false
   let tail = initial.tail
+  const output = new RecentPtyOutputBuffer()
+  output.append(tail.join('\n'))
   let rows: StatusRow[] = []
   const waiters = new Set<() => void>()
   const runtime: AutomationRunTerminalHost = {
     getTerminalHandleForPaneKey: () => HANDLE,
     readTerminal: async () => ({ tail }),
+    readTerminalOutputSince: (_handle, boundary) => {
+      const raw = output.readSince(boundary)
+      return raw === null ? null : normalizeTerminalChunk(raw).text.split('\n')
+    },
     waitForTerminal: (_handle, options) => {
       if (options?.signal?.aborted) {
         return Promise.reject(new Error('request_aborted'))
@@ -57,6 +65,8 @@ function createPane(initial: { idle: boolean; tail: string[]; idleEdgeOnly?: boo
   }
   return {
     runtime,
+    output,
+    boundary: (fresh = true) => ({ ...output.boundary(), ...(fresh ? { offset: 0 } : {}) }),
     agentRows: () => rows,
     report: (row: Partial<StatusRow> = {}) =>
       (rows = [{ state: 'done', receivedAt: Date.now(), stateStartedAt: Date.now(), ...row }]),
@@ -81,7 +91,8 @@ function observe(
     startedAt: Date.now(),
     dispatchedAt: null
   },
-  commands = ['goose']
+  commands = ['goose'],
+  terminalOutputBoundary: AutomationRun['terminalOutputBoundary'] = pane.boundary()
 ) {
   const observer = createRuntimeAutomationRunTerminalObserver(pane.runtime, {
     getAgentStatusRowsForPane: (paneKey) => (paneKey === PANE_KEY ? pane.agentRows() : []),
@@ -90,6 +101,7 @@ function observe(
   // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: the observer reads only these run fields.
   const run = {
     terminalPaneKey: PANE_KEY,
+    terminalOutputBoundary,
     ...times
   } as AutomationRun
   const settled = vi.fn()
@@ -109,6 +121,59 @@ afterEach(() => {
 })
 
 describe('observing a run with agent evidence', () => {
+  it('does not fail a new run on a reused pane before any new banner or status', async () => {
+    const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
+    const run = observe(pane, undefined, undefined, ['codex'], pane.boundary(false))
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(run.settled).not.toHaveBeenCalled()
+    run.controller.abort()
+    await run.promise
+  })
+
+  it('does not infer a bootstrap failure without a launch boundary from an older caller', async () => {
+    const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
+    const run = observe(pane, undefined, undefined, ['codex'], null)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(run.settled).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+  })
+
+  it('detects a new split ANSI bootstrap failure even when observation starts late', async () => {
+    const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
+    const boundary = pane.boundary(false)
+    const failure = `\n${codexBootstrapFailureTail.join('\n')}\n`
+    for (const character of `\x1b[32m${failure}\x1b[0m`) {
+      pane.output.append(character)
+    }
+    await vi.advanceTimersByTimeAsync(20_000)
+    const run = observe(pane, undefined, undefined, ['codex'], boundary)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'dispatch_failed',
+        errorCode: 'codexBootstrapFailed'
+      })
+    )
+  })
+
+  it('reports a typed bootstrap failure after current-launch output rolls past retention', async () => {
+    const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
+    const boundary = pane.boundary(false)
+    pane.output.append('startup noise\n'.repeat(6_000))
+    pane.output.append(`\n${codexBootstrapFailureTail.join('\n')}`)
+    const run = observe(pane, undefined, undefined, ['codex'], boundary)
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'dispatch_failed',
+        errorCode: 'codexBootstrapFailed'
+      })
+    )
+  })
+
   it('fails a Codex bootstrap refusal after the shell returns, with a recovery action', async () => {
     const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
     const run = observe(pane, undefined, undefined, ['codex'])

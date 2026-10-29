@@ -28,7 +28,8 @@ export function judgeIdleRun(
   run: AutomationRun,
   tail: readonly string[],
   runStartedAt: number,
-  now: number
+  now: number,
+  launchTail?: readonly string[] | null
 ): IdleRunVerdict {
   const verdict = judgeIdleAgentTurn(
     {
@@ -36,6 +37,7 @@ export function judgeIdleRun(
       // Ignore completion evidence from before this run’s prompt.
       sentAt: run.dispatchedAt ?? runStartedAt,
       tail,
+      launchTail,
       readAgentCommands: () => evidence.agentCommandsForRun(run)
     },
     now

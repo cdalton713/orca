@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import type { TerminalOutputBoundary } from '../../shared/runtime-terminal-contracts'
 import { ownRetainedString } from '../../shared/own-retained-string'
 
 export const RECENT_PTY_OUTPUT_LIMIT = 64 * 1024
@@ -7,6 +9,9 @@ const DROPPED_HEAD_COMPACT_THRESHOLD = 1024
 
 /** Retain the configured UTF-16 tail as chunks; defer joins to avoid flattening a large rolling string on every PTY write. */
 export class RecentPtyOutputBuffer {
+  private readonly generation = randomUUID()
+  private offset = 0
+  private historicalRanges: { start: number; end: number }[] = []
   private chunks: string[] = []
   private headIndex = 0
   // Defer head trimming to avoid per-append substrings.
@@ -22,9 +27,26 @@ export class RecentPtyOutputBuffer {
     }
   }
 
+  appendHistorical(data: string): void {
+    const start = this.offset
+    this.append(data)
+    if (data.length > 0) {
+      this.historicalRanges.push({ start, end: this.offset })
+    }
+  }
+
   append(data: string): void {
     if (data.length === 0) {
       return
+    }
+    this.offset += data.length
+    if (
+      this.historicalRanges.length > 0 &&
+      this.historicalRanges[0].end <= this.offset - this.limit
+    ) {
+      this.historicalRanges = this.historicalRanges.filter(
+        (range) => range.end > this.offset - this.limit
+      )
     }
     if (data.length >= this.limit) {
       this.chunks = [data.length > this.limit ? ownRetainedString(data.slice(-this.limit)) : data]
@@ -52,6 +74,34 @@ export class RecentPtyOutputBuffer {
       this.chunks = this.chunks.slice(this.headIndex)
       this.headIndex = 0
     }
+  }
+
+  boundary(): TerminalOutputBoundary {
+    return { generation: this.generation, offset: this.offset }
+  }
+
+  readSince(boundary: TerminalOutputBoundary): string | null {
+    if (
+      boundary.generation !== this.generation ||
+      !Number.isSafeInteger(boundary.offset) ||
+      boundary.offset < 0 ||
+      boundary.offset > this.offset
+    ) {
+      return null
+    }
+    const retained = this.read()
+    const oldest = this.offset - this.totalLen
+    let cursor = Math.max(boundary.offset, oldest)
+    const parts: string[] = []
+    for (const range of this.historicalRanges) {
+      if (range.end <= cursor) {
+        continue
+      }
+      parts.push(retained.slice(cursor - oldest, Math.max(cursor, range.start) - oldest))
+      cursor = range.end
+    }
+    parts.push(retained.slice(cursor - oldest))
+    return parts.join('')
   }
 
   read(): string {

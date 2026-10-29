@@ -40,6 +40,28 @@ function mulberry32(seed: number): () => number {
 }
 
 describe('RecentPtyOutputBuffer', () => {
+  it('scopes live output at a boundary without replaying late historical snapshots', () => {
+    const buffer = new RecentPtyOutputBuffer()
+    buffer.append('old failure')
+    const boundary = buffer.boundary()
+    buffer.append('new ')
+    buffer.appendHistorical('old serialized failure')
+    buffer.append('failure')
+    expect(buffer.readSince(boundary)).toBe('new failure')
+    expect(buffer.read()).toBe('old failurenew old serialized failurefailure')
+  })
+
+  it('retains a proven newer suffix and refuses stale generations or invalid offsets', () => {
+    const buffer = new RecentPtyOutputBuffer({ limit: 10 })
+    const boundary = buffer.boundary()
+    buffer.append('12345678901')
+    expect(buffer.readSince(boundary)).toBe('2345678901')
+    expect(buffer.readSince(new RecentPtyOutputBuffer().boundary())).toBeNull()
+    expect(buffer.readSince({ ...buffer.boundary(), offset: -1 })).toBeNull()
+    expect(buffer.readSince({ ...buffer.boundary(), offset: 12 })).toBeNull()
+    expect(buffer.readSince(buffer.boundary())).toBe('')
+  })
+
   it('returns an empty string before any append', () => {
     expect(new RecentPtyOutputBuffer().read()).toBe('')
     expectEquivalent([])

@@ -10,6 +10,28 @@ import {
 import { store, syncSinglePty } from '../orca-runtime-test-fixtures.spec'
 
 describe('OrcaRuntimeService', () => {
+  it('reads only current launch bytes through split ANSI without a completed line', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    syncSinglePty(runtime)
+    const [terminal] = (await runtime.listTerminals()).terminals
+    runtime.onPtyData('pty-1', '>_ OpenAI Codex (old)\nError: old bootstrap failure', 100)
+    const { outputBoundary } = await runtime.readTerminal(terminal.handle)
+    expect(outputBoundary).toBeDefined()
+    if (!outputBoundary) {
+      throw new Error('Missing raw output boundary')
+    }
+    expect(runtime.readTerminalOutputSince(terminal.handle, outputBoundary)).toEqual([''])
+    runtime.onPtyData('pty-1', '\r\x1b[3', 101)
+    runtime.onPtyData('pty-1', '2m>_ OpenAI Codex (new)\nError: account/read failed ', 102)
+    runtime.onPtyData('pty-1', 'during TUI bootstrap: current failure\x1b[0m', 103)
+    expect(runtime.readTerminalOutputSince(terminal.handle, outputBoundary)).toEqual([
+      '\r>_ OpenAI Codex (new)',
+      'Error: account/read failed during TUI bootstrap: current failure'
+    ])
+    const fresh = runtime.captureTerminalOutputBoundary(terminal.handle, true)
+    expect(fresh?.offset).toBe(0)
+  })
+
   it('trims oversized terminal output bursts without per-line array shifts', async () => {
     const shiftSpy = vi.spyOn(Array.prototype, 'shift')
     const lines = Array.from({ length: 5000 }, (_, index) => `line-${index}`)

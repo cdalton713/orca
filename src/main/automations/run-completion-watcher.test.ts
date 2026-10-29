@@ -1,3 +1,4 @@
+import { RecentPtyOutputBuffer } from '../runtime/recent-pty-output-buffer'
 import { closeTestStores, createStore, testState } from '../persistence/persistence-test-harness'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -114,13 +115,18 @@ describe('authority-owned automation run completion', () => {
   it('persists a typed Codex startup failure and retains its terminal for recovery', async () => {
     const store = await createStore()
     const automation = createAutomation(store, 'codex')
+    const output = new RecentPtyOutputBuffer()
+    const terminalOutputBoundary = output.boundary()
+    output.append(codexBootstrapFailureTail.join('\n'))
     const service = new AutomationService(store, {
-      headlessDispatcher: async () => ({ ...LAUNCH_TARGET }),
+      headlessDispatcher: async () => ({ ...LAUNCH_TARGET, terminalOutputBoundary }),
       terminalObserver: createRuntimeAutomationRunTerminalObserver(
         {
           getTerminalHandleForPaneKey: () => 'handle-1',
           waitForTerminal: async () => ({ satisfied: true }),
-          readTerminal: async () => ({ tail: codexBootstrapFailureTail })
+          readTerminal: async () => ({ tail: codexBootstrapFailureTail }),
+          readTerminalOutputSince: (_handle, boundary) =>
+            output.readSince(boundary)?.split('\n') ?? null
         },
         { getAgentStatusRowsForPane: () => [], agentCommandsForRun: () => ['codex'] }
       )

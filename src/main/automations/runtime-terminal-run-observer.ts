@@ -1,3 +1,4 @@
+import type { TerminalOutputBoundary } from '../../shared/runtime-terminal-contracts'
 import { createHeadlessAutomationOutputSnapshotBuffer } from './headless-dispatch'
 import type {
   AutomationRunCompletionObservation,
@@ -30,6 +31,7 @@ const HELD_DONE_SETTLE_MS = 30_000
 const OBSERVE_DEADLINE_MS = 6 * 60 * 60 * 1000
 
 export type AutomationRunTerminalHost = {
+  readTerminalOutputSince?(handle: string, boundary: TerminalOutputBoundary): string[] | null
   getTerminalHandleForPaneKey(paneKey: string): string | null
   waitForTerminal(
     handle: string,
@@ -56,9 +58,10 @@ async function judgeIdleTail(
   tail: readonly string[],
   evidence: AutomationRunAgentEvidence,
   run: AutomationRun,
-  runStartedAt: number
+  runStartedAt: number,
+  launchTail: readonly string[] | null
 ): Promise<AutomationRunCompletionObservation | null> {
-  const verdict = judgeIdleRun(evidence, run, tail, runStartedAt, Date.now())
+  const verdict = judgeIdleRun(evidence, run, tail, runStartedAt, Date.now(), launchTail)
   if (verdict.kind === 'wait') {
     return null
   }
@@ -88,7 +91,16 @@ async function settleIdlePane(
     if (tail.join('\n') !== idleTail) {
       return null
     }
-    const observation = await judgeIdleTail(tail, judged.evidence, judged.run, runStartedAt)
+    const launchTail = judged.run.terminalOutputBoundary
+      ? (runtime.readTerminalOutputSince?.(handle, judged.run.terminalOutputBoundary) ?? null)
+      : null
+    const observation = await judgeIdleTail(
+      tail,
+      judged.evidence,
+      judged.run,
+      runStartedAt,
+      launchTail
+    )
     if (observation) {
       return observation
     }

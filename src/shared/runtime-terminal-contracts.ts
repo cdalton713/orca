@@ -198,6 +198,11 @@ export type RuntimeTerminalRowMetadata = {
   trailingSpaces: number
 }
 
+export type TerminalOutputBoundary = {
+  generation: string
+  offset: number
+}
+
 export type RuntimeTerminalRead = {
   handle: string
   status: RuntimeTerminalState
@@ -210,6 +215,8 @@ export type RuntimeTerminalRead = {
   nextCursor: string | null
   latestCursor?: string
   returnedLineCount?: number
+  /** Raw output boundary; absent on hosts that cannot scope launch evidence. */
+  outputBoundary?: TerminalOutputBoundary
   source?: 'stream' | 'screen' | 'screen-unavailable'
   /** UI-only composer text, excluded from `tail`. */
   draft?: string
