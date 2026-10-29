@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentStatusState } from '../../shared/agent-status-types'
 import type { AutomationRun } from '../../shared/automations-types'
 import { AGENT_START_GRACE_MS } from './automation-run-agent-evidence'
+import { codexBootstrapFailureTail } from './codex-bootstrap-failure.test-fixture'
 import {
   createRuntimeAutomationRunTerminalObserver,
   type AutomationRunTerminalHost
@@ -79,11 +80,12 @@ function observe(
   times: Pick<AutomationRun, 'startedAt' | 'dispatchedAt'> = {
     startedAt: Date.now(),
     dispatchedAt: null
-  }
+  },
+  commands = ['goose']
 ) {
   const observer = createRuntimeAutomationRunTerminalObserver(pane.runtime, {
     getAgentStatusRowsForPane: (paneKey) => (paneKey === PANE_KEY ? pane.agentRows() : []),
-    agentCommandsForRun: () => ['goose']
+    agentCommandsForRun: () => commands
   })
   // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: the observer reads only these run fields.
   const run = {
@@ -107,6 +109,23 @@ afterEach(() => {
 })
 
 describe('observing a run with agent evidence', () => {
+  it('fails a Codex bootstrap refusal after the shell returns, with a recovery action', async () => {
+    const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
+    const run = observe(pane, undefined, undefined, ['codex'])
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'dispatch_failed',
+        errorCode: 'codexBootstrapFailed',
+        error: expect.stringContaining('Run now'),
+        outputSnapshot: expect.objectContaining({
+          content: expect.stringContaining('workspace routing discovery failed')
+        })
+      })
+    )
+  })
+
   it.each([
     ['bash', 'bash: goose: command not found'],
     ['zsh', 'zsh: command not found: goose'],
@@ -122,6 +141,48 @@ describe('observing a run with agent evidence', () => {
         error: expect.stringContaining(refusal)
       })
     )
+  })
+
+  it('completes a fresh genuine done despite the historical bootstrap failure', async () => {
+    const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
+    pane.report()
+    const run = observe(pane, undefined, undefined, ['codex'])
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+  })
+
+  it.each([
+    { state: 'working' as const },
+    { state: 'waiting' as const },
+    { state: 'blocked' as const },
+    { state: 'done' as const, sessionBoundary: true },
+    { state: 'done' as const, stateStartedAt: 0 }
+  ])('preserves uncertain ownership with $state status and old failure output', async (row) => {
+    const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
+    pane.report(row)
+    const run = observe(pane, undefined, undefined, ['codex'])
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+    expect(run.settled).not.toHaveBeenCalled()
+    run.controller.abort()
+    await run.promise
+  })
+
+  it('ignores a prior bootstrap failure before a later Codex startup banner', async () => {
+    const pane = createPane({
+      idle: true,
+      tail: [...codexBootstrapFailureTail, '>_ OpenAI Codex (v0.165.0)', 'Task finished', '$']
+    })
+    const run = observe(pane, undefined, undefined, ['codex'])
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+  })
+
+  it('does not treat another agent reporting a Codex failure as a refused launch', async () => {
+    const run = observe(createPane({ idle: true, tail: codexBootstrapFailureTail }))
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
   })
 
   it('completes once the agent itself reported for the run pane', async () => {

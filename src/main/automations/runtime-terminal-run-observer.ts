@@ -64,7 +64,13 @@ async function judgeIdleTail(
   }
   return verdict.kind === 'completed'
     ? { status: 'completed', outputSnapshot: snapshotOf(tail), error: null }
-    : { status: 'dispatch_failed', outputSnapshot: snapshotOf(tail), error: verdict.error }
+    : {
+        status: 'dispatch_failed',
+        outputSnapshot: snapshotOf(tail),
+        error: verdict.error,
+        errorCode: verdict.errorCode,
+        errorParams: verdict.errorParams
+      }
 }
 
 /** Rejudge unchanged idle output: an idle shell may never emit another idle edge. */

@@ -7,6 +7,8 @@ import type { Repo } from '../../shared/repo-types'
 import type { Automation, AutomationRun } from '../../shared/automations-types'
 import type { AutomationsChangedPayload } from '../../shared/runtime-client-events'
 import { AutomationService } from './service'
+import { createRuntimeAutomationRunTerminalObserver } from './runtime-terminal-run-observer'
+import { codexBootstrapFailureTail } from './codex-bootstrap-failure.test-fixture'
 import type {
   AutomationRunCompletionObservation,
   AutomationRunTerminalObserver
@@ -41,12 +43,12 @@ const makeRepo = (overrides: Partial<Repo> = {}): Repo => ({
 
 type TestStore = Awaited<ReturnType<typeof createStore>>
 
-function createAutomation(store: TestStore): Automation {
+function createAutomation(store: TestStore, agentId: Automation['agentId'] = 'claude'): Automation {
   store.addRepo(makeRepo())
   return store.createAutomation({
     name: 'Nightly check',
     prompt: 'Check the repo',
-    agentId: 'claude',
+    agentId,
     projectId: 'r1',
     workspaceMode: 'existing',
     workspaceId: 'wt1',
@@ -106,6 +108,37 @@ describe('authority-owned automation run completion', () => {
     await vi.waitFor(() => {
       expect(readRun(store, automation.id, run.id).status).toBe('completed')
     })
+    service.stop()
+  })
+
+  it('persists a typed Codex startup failure and retains its terminal for recovery', async () => {
+    const store = await createStore()
+    const automation = createAutomation(store, 'codex')
+    const service = new AutomationService(store, {
+      headlessDispatcher: async () => ({ ...LAUNCH_TARGET }),
+      terminalObserver: createRuntimeAutomationRunTerminalObserver(
+        {
+          getTerminalHandleForPaneKey: () => 'handle-1',
+          waitForTerminal: async () => ({ satisfied: true }),
+          readTerminal: async () => ({ tail: codexBootstrapFailureTail })
+        },
+        { getAgentStatusRowsForPane: () => [], agentCommandsForRun: () => ['codex'] }
+      )
+    })
+
+    const run = await service.runNow(automation.id)
+    await vi.waitFor(() => {
+      expect(readRun(store, automation.id, run.id)).toMatchObject({
+        ...LAUNCH_TARGET,
+        status: 'dispatch_failed',
+        errorCode: 'codexBootstrapFailed',
+        error: expect.stringContaining('Run now'),
+        outputSnapshot: expect.objectContaining({
+          content: expect.stringContaining('workspace routing discovery failed')
+        })
+      })
+    })
+    expect(store.listAutomationRuns(automation.id)).toHaveLength(1)
     service.stop()
   })
 

@@ -1,3 +1,7 @@
+import {
+  automationRunFailure,
+  type AutomationRunFailure
+} from '../../shared/automation-run-failure-copy'
 import type { AutomationRun } from '../../shared/automations-types'
 import {
   isTurnDoneSince,
@@ -15,7 +19,7 @@ export type AutomationRunAgentEvidence = {
 
 export type IdleRunVerdict =
   | { kind: 'completed' }
-  | { kind: 'failed'; error: string }
+  | ({ kind: 'failed' } & AutomationRunFailure)
   /** An idle shell that may not have started the agent yet. */
   | { kind: 'wait' }
 
@@ -36,12 +40,17 @@ export function judgeIdleRun(
     },
     now
   )
-  return verdict.kind === 'failed'
-    ? {
-        kind: 'failed',
-        error: `Automation agent did not start; this host could not run its command (${verdict.missingCommandLine}).`
-      }
-    : verdict
+  if (verdict.kind !== 'failed') {
+    return verdict
+  }
+  return {
+    kind: 'failed',
+    ...(verdict.reason === 'codex-bootstrap'
+      ? automationRunFailure('codexBootstrapFailed')
+      : {
+          error: `Automation agent did not start; this host could not run its command (${verdict.missingCommandLine}).`
+        })
+  }
 }
 
 /** The agent reported this run's turn done at least `heldForMs` ago, and no row of its pane says otherwise. */
