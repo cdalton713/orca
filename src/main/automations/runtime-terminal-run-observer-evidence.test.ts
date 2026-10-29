@@ -189,6 +189,19 @@ describe('observing a run with agent evidence', () => {
     )
   })
 
+  it('retains a current bootstrap failure when a large historical snapshot arrives late', async () => {
+    const pane = createPane({ idle: true, tail: ['$'] })
+    const boundary = pane.boundary(false)
+    pane.output.append(codexBootstrapFailureTail.join('\n'))
+    pane.output.appendHistorical('old snapshot\n'.repeat(6_000))
+    const run = observe(pane, undefined, undefined, ['codex'], boundary)
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'dispatch_failed', errorCode: 'codexBootstrapFailed' })
+    )
+  })
+
   it('reports a typed bootstrap failure after current-launch output rolls past retention', async () => {
     const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
     const boundary = pane.boundary(false)

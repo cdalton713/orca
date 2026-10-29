@@ -32,6 +32,29 @@ describe('OrcaRuntimeService', () => {
     expect(fresh?.offset).toBe(0)
   })
 
+  it('keeps live launch evidence when renderer hydration returns a large historical snapshot', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeBuffer: async () => ({ data: 'old snapshot\r\n'.repeat(6_000), cols: 80, rows: 24 }),
+      hasRendererSerializer: () => true,
+      getSize: () => ({ cols: 80, rows: 24 })
+    })
+    syncSinglePty(runtime)
+    const [terminal] = (await runtime.listTerminals()).terminals
+    const boundary = runtime.captureTerminalOutputBoundary(terminal.handle)
+    if (!boundary) {
+      throw new Error('Missing launch boundary')
+    }
+    const failure =
+      '>_ OpenAI Codex (new)\nError: account/read failed during TUI bootstrap: current failure'
+    runtime.onPtyData('pty-1', failure, 100)
+    await runtime.serializeMainTerminalBuffer('pty-1', { scrollbackRows: 1000 })
+    expect(runtime.readTerminalOutputSince(terminal.handle, boundary)).toEqual(failure.split('\n'))
+  })
+
   it('trims oversized terminal output bursts without per-line array shifts', async () => {
     const shiftSpy = vi.spyOn(Array.prototype, 'shift')
     const lines = Array.from({ length: 5000 }, (_, index) => `line-${index}`)

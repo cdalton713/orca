@@ -51,6 +51,28 @@ describe('RecentPtyOutputBuffer', () => {
     expect(buffer.read()).toBe('old failurenew old serialized failurefailure')
   })
 
+  it('bounds live evidence independently of repeated historical display snapshots', () => {
+    const buffer = new RecentPtyOutputBuffer({ limit: 10 })
+    buffer.append('old')
+    const boundary = buffer.boundary()
+    buffer.append('failure')
+    const afterFailure = buffer.boundary()
+    for (let index = 0; index < 3; index += 1) {
+      buffer.appendHistorical('historical snapshot')
+      expect(buffer.read()).toBe('l snapshot')
+      expect(buffer.readSince(boundary)).toBe('failure')
+      expect(buffer.boundary()).toEqual(afterFailure)
+    }
+    buffer.append('12345678901')
+    expect(buffer.read()).toBe('2345678901')
+    expect(buffer.readSince(boundary)).toBe('2345678901')
+    const nextLaunch = buffer.boundary()
+    buffer.appendHistorical('old failure')
+    expect(buffer.readSince(nextLaunch)).toBe('')
+    buffer.append('done')
+    expect(buffer.readSince(nextLaunch)).toBe('done')
+  })
+
   it('retains a proven newer suffix and refuses stale generations or invalid offsets', () => {
     const buffer = new RecentPtyOutputBuffer({ limit: 10 })
     const boundary = buffer.boundary()

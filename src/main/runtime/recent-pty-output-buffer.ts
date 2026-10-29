@@ -7,11 +7,8 @@ export const RECENT_PTY_OUTPUT_LIMIT = 64 * 1024
 // Compact dropped array slots so long chunk floods cannot grow the backing array without bound.
 const DROPPED_HEAD_COMPACT_THRESHOLD = 1024
 
-/** Retain the configured UTF-16 tail as chunks; defer joins to avoid flattening a large rolling string on every PTY write. */
-export class RecentPtyOutputBuffer {
-  private readonly generation = randomUUID()
-  private offset = 0
-  private historicalRanges: { start: number; end: number }[] = []
+/** Retain UTF-16 chunks without copying a partial head on every append. */
+class PtyOutputWindow {
   private chunks: string[] = []
   private headIndex = 0
   // Defer head trimming to avoid per-append substrings.
@@ -27,26 +24,9 @@ export class RecentPtyOutputBuffer {
     }
   }
 
-  appendHistorical(data: string): void {
-    const start = this.offset
-    this.append(data)
-    if (data.length > 0) {
-      this.historicalRanges.push({ start, end: this.offset })
-    }
-  }
-
   append(data: string): void {
     if (data.length === 0) {
       return
-    }
-    this.offset += data.length
-    if (
-      this.historicalRanges.length > 0 &&
-      this.historicalRanges[0].end <= this.offset - this.limit
-    ) {
-      this.historicalRanges = this.historicalRanges.filter(
-        (range) => range.end > this.offset - this.limit
-      )
     }
     if (data.length >= this.limit) {
       this.chunks = [data.length > this.limit ? ownRetainedString(data.slice(-this.limit)) : data]
@@ -76,34 +56,6 @@ export class RecentPtyOutputBuffer {
     }
   }
 
-  boundary(): TerminalOutputBoundary {
-    return { generation: this.generation, offset: this.offset }
-  }
-
-  readSince(boundary: TerminalOutputBoundary): string | null {
-    if (
-      boundary.generation !== this.generation ||
-      !Number.isSafeInteger(boundary.offset) ||
-      boundary.offset < 0 ||
-      boundary.offset > this.offset
-    ) {
-      return null
-    }
-    const retained = this.read()
-    const oldest = this.offset - this.totalLen
-    let cursor = Math.max(boundary.offset, oldest)
-    const parts: string[] = []
-    for (const range of this.historicalRanges) {
-      if (range.end <= cursor) {
-        continue
-      }
-      parts.push(retained.slice(cursor - oldest, Math.max(cursor, range.start) - oldest))
-      cursor = range.end
-    }
-    parts.push(retained.slice(cursor - oldest))
-    return parts.join('')
-  }
-
   read(): string {
     if (this.chunks.length - this.headIndex > 1) {
       // Collapse to the joined tail so repeated reads stay O(1).
@@ -119,5 +71,50 @@ export class RecentPtyOutputBuffer {
       this.headOffset = 0
     }
     return this.chunks[this.headIndex] ?? ''
+  }
+}
+
+/** Display replay and live launch evidence have independent eviction windows. */
+export class RecentPtyOutputBuffer {
+  private readonly generation = randomUUID()
+  private offset = 0
+  private readonly display: PtyOutputWindow
+  private readonly live: PtyOutputWindow
+
+  constructor(options?: { limit?: number }) {
+    this.display = new PtyOutputWindow(options)
+    this.live = new PtyOutputWindow(options)
+  }
+
+  appendHistorical(data: string): void {
+    this.display.append(data)
+  }
+
+  append(data: string): void {
+    this.display.append(data)
+    this.live.append(data)
+    this.offset += data.length
+  }
+
+  boundary(): TerminalOutputBoundary {
+    return { generation: this.generation, offset: this.offset }
+  }
+
+  readSince(boundary: TerminalOutputBoundary): string | null {
+    if (
+      boundary.generation !== this.generation ||
+      !Number.isSafeInteger(boundary.offset) ||
+      boundary.offset < 0 ||
+      boundary.offset > this.offset
+    ) {
+      return null
+    }
+    const retained = this.live.read()
+    const oldest = this.offset - retained.length
+    return retained.slice(Math.max(boundary.offset, oldest) - oldest)
+  }
+
+  read(): string {
+    return this.display.read()
   }
 }
