@@ -25,7 +25,7 @@ export type IdleAgentTurnEvidence = {
   /** Ignore status from turns before this prompt. */
   sentAt: number
   tail: readonly string[]
-  /** Output scoped at dispatch, never a retained pane preview. */
+  /** Dispatch-scoped output: null means unreadable provenance; undefined is a legacy caller. */
   launchTail?: readonly string[] | null
   /** Read only when no fresh `done` decides it: the names the agent command may run under. */
   readAgentCommands: () => readonly string[]
@@ -103,7 +103,7 @@ export function judgeIdleAgentTurn(
     }
   }
   // Only an agent that never reports status is believed done by an idle pane.
-  return rows.length === 0 && now - sentAt >= AGENT_START_GRACE_MS
+  return rows.length === 0 && evidence.launchTail !== null && now - sentAt >= AGENT_START_GRACE_MS
     ? { kind: 'completed' }
     : { kind: 'wait' }
 }

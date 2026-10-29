@@ -59,7 +59,7 @@ async function judgeIdleTail(
   evidence: AutomationRunAgentEvidence,
   run: AutomationRun,
   runStartedAt: number,
-  launchTail: readonly string[] | null
+  launchTail: readonly string[] | null | undefined
 ): Promise<AutomationRunCompletionObservation | null> {
   const verdict = judgeIdleRun(evidence, run, tail, runStartedAt, Date.now(), launchTail)
   if (verdict.kind === 'wait') {
@@ -93,7 +93,7 @@ async function settleIdlePane(
     }
     const launchTail = judged.run.terminalOutputBoundary
       ? (runtime.readTerminalOutputSince?.(handle, judged.run.terminalOutputBoundary) ?? null)
-      : null
+      : undefined
     const observation = await judgeIdleTail(
       tail,
       judged.evidence,

@@ -130,6 +130,27 @@ describe('observing a run with agent evidence', () => {
     await run.promise
   })
 
+  it.each([false, true])(
+    'waits after output generation replacement, with new failure: %s',
+    async (newFailure) => {
+      const previous = createPane({ idle: true, tail: ['launching Codex'] })
+      const savedBoundary = previous.boundary(false)
+      const pane = createPane({ idle: true, tail: ['$'] })
+      if (newFailure) {
+        pane.output.append(codexBootstrapFailureTail.join('\n'))
+        pane.setTail(codexBootstrapFailureTail)
+      }
+      const run = observe(pane, undefined, undefined, ['codex'], savedBoundary)
+      await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+      expect(run.settled).not.toHaveBeenCalled()
+      expect(run.failed).not.toHaveBeenCalled()
+      pane.report()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await run.promise
+      expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+    }
+  )
+
   it('does not infer a bootstrap failure without a launch boundary from an older caller', async () => {
     const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
     const run = observe(pane, undefined, undefined, ['codex'], null)
@@ -138,6 +159,16 @@ describe('observing a run with agent evidence', () => {
     await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS)
     await run.promise
     expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+  })
+
+  it('waits when a saved boundary cannot be read by an older host', async () => {
+    const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
+    delete pane.runtime.readTerminalOutputSince
+    const run = observe(pane, undefined, undefined, ['codex'])
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+    expect(run.settled).not.toHaveBeenCalled()
+    run.controller.abort()
+    await run.promise
   })
 
   it('detects a new split ANSI bootstrap failure even when observation starts late', async () => {

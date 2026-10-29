@@ -148,6 +148,57 @@ describe('authority-owned automation run completion', () => {
     service.stop()
   })
 
+  it('keeps a restored run dispatched when its saved launch boundary is unreadable', async () => {
+    const store = await createStore()
+    const automation = createAutomation(store, 'codex')
+    store.updateAutomation(automation.id, { enabled: false })
+    const run = store.createAutomationRun(automation, Date.now(), 'manual')
+    const terminalOutputBoundary = new RecentPtyOutputBuffer().boundary()
+    store.updateAutomationRun({
+      runId: run.id,
+      status: 'dispatched',
+      ...LAUNCH_TARGET,
+      terminalOutputBoundary,
+      error: null
+    })
+    await closeTestStores()
+    const restored = await createStore()
+    expect(readRun(restored, automation.id, run.id).terminalOutputBoundary).toEqual(
+      terminalOutputBoundary
+    )
+    const output = new RecentPtyOutputBuffer()
+    output.append(codexBootstrapFailureTail.join('\n'))
+    let done = false
+    const service = new AutomationService(restored, {
+      terminalObserver: createRuntimeAutomationRunTerminalObserver(
+        {
+          getTerminalHandleForPaneKey: () => 'handle-1',
+          waitForTerminal: async () => ({ satisfied: true }),
+          readTerminal: async () => ({ tail: codexBootstrapFailureTail }),
+          readTerminalOutputSince: (_handle, boundary) =>
+            output.readSince(boundary)?.split('\n') ?? null
+        },
+        {
+          getAgentStatusRowsForPane: () =>
+            done ? [{ state: 'done', stateStartedAt: Date.now() }] : [],
+          agentCommandsForRun: () => ['codex']
+        }
+      )
+    })
+    vi.useFakeTimers()
+    try {
+      service.start()
+      await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+      expect(readRun(restored, automation.id, run.id).status).toBe('dispatched')
+      done = true
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(readRun(restored, automation.id, run.id).status).toBe('completed')
+    } finally {
+      service.stop()
+      vi.useRealTimers()
+    }
+  })
+
   it('leaves a headless dispatched run alone when the authority cannot observe it', async () => {
     const store = await createStore()
     const automation = createAutomation(store)
