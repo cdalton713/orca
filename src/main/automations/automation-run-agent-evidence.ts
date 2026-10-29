@@ -1,3 +1,4 @@
+import type { TerminalOutputSince } from '../../shared/runtime-terminal-contracts'
 import {
   automationRunFailure,
   type AutomationRunFailure
@@ -29,7 +30,7 @@ export function judgeIdleRun(
   tail: readonly string[],
   runStartedAt: number,
   now: number,
-  launchTail?: readonly string[] | null
+  launchTail?: TerminalOutputSince<readonly string[]> | null
 ): IdleRunVerdict {
   const verdict = judgeIdleAgentTurn(
     {

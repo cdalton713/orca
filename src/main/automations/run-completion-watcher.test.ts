@@ -125,8 +125,10 @@ describe('authority-owned automation run completion', () => {
           getTerminalHandleForPaneKey: () => 'handle-1',
           waitForTerminal: async () => ({ satisfied: true }),
           readTerminal: async () => ({ tail: codexBootstrapFailureTail }),
-          readTerminalOutputSince: (_handle, boundary) =>
-            output.readSince(boundary)?.split('\n') ?? null
+          readTerminalOutputSince: (_handle, boundary) => {
+            const raw = output.readSince(boundary)
+            return raw === null ? null : { output: raw.output.split('\n'), complete: raw.complete }
+          }
         },
         { getAgentStatusRowsForPane: () => [], agentCommandsForRun: () => ['codex'] }
       )
@@ -175,8 +177,10 @@ describe('authority-owned automation run completion', () => {
           getTerminalHandleForPaneKey: () => 'handle-1',
           waitForTerminal: async () => ({ satisfied: true }),
           readTerminal: async () => ({ tail: codexBootstrapFailureTail }),
-          readTerminalOutputSince: (_handle, boundary) =>
-            output.readSince(boundary)?.split('\n') ?? null
+          readTerminalOutputSince: (_handle, boundary) => {
+            const raw = output.readSince(boundary)
+            return raw === null ? null : { output: raw.output.split('\n'), complete: raw.complete }
+          }
         },
         {
           getAgentStatusRowsForPane: () =>

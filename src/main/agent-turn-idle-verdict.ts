@@ -1,3 +1,4 @@
+import type { TerminalOutputSince } from '../shared/runtime-terminal-contracts'
 // A shell prompt can look complete even after command-not-found; require fresh agent completion.
 // Status-free panes may finish after startup grace unless startup failed.
 import type { AgentStatusIpcPayload } from '../shared/agent-status-types'
@@ -25,8 +26,8 @@ export type IdleAgentTurnEvidence = {
   /** Ignore status from turns before this prompt. */
   sentAt: number
   tail: readonly string[]
-  /** Dispatch-scoped output: null means unreadable provenance; undefined is a legacy caller. */
-  launchTail?: readonly string[] | null
+  /** Dispatch-scoped output: null is unavailable; undefined is a legacy caller. */
+  launchTail?: TerminalOutputSince<readonly string[]> | null
   /** Read only when no fresh `done` decides it: the names the agent command may run under. */
   readAgentCommands: () => readonly string[]
 }
@@ -97,13 +98,15 @@ export function judgeIdleAgentTurn(
   }
   // Fresh status proves the agent passed bootstrap; retained status cannot date old screen output.
   if (rows.length === 0 && commands.some((command) => command.split(/\s+/)[0] === 'codex')) {
-    const bootstrapFailureLine = findCodexBootstrapFailure(evidence.launchTail ?? [])
+    const bootstrapFailureLine = findCodexBootstrapFailure(evidence.launchTail?.output ?? [])
     if (bootstrapFailureLine) {
       return { kind: 'failed', reason: 'codex-bootstrap', bootstrapFailureLine }
     }
   }
   // Only an agent that never reports status is believed done by an idle pane.
-  return rows.length === 0 && evidence.launchTail !== null && now - sentAt >= AGENT_START_GRACE_MS
+  return rows.length === 0 &&
+    (evidence.launchTail === undefined || evidence.launchTail?.complete === true) &&
+    now - sentAt >= AGENT_START_GRACE_MS
     ? { kind: 'completed' }
     : { kind: 'wait' }
 }

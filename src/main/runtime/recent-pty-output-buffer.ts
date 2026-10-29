@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import type { TerminalOutputBoundary } from '../../shared/runtime-terminal-contracts'
+import type {
+  TerminalOutputBoundary,
+  TerminalOutputSince
+} from '../../shared/runtime-terminal-contracts'
 import { ownRetainedString } from '../../shared/own-retained-string'
 
 export const RECENT_PTY_OUTPUT_LIMIT = 64 * 1024
@@ -100,7 +103,7 @@ export class RecentPtyOutputBuffer {
     return { generation: this.generation, offset: this.offset }
   }
 
-  readSince(boundary: TerminalOutputBoundary): string | null {
+  readSince(boundary: TerminalOutputBoundary): TerminalOutputSince<string> | null {
     if (
       boundary.generation !== this.generation ||
       !Number.isSafeInteger(boundary.offset) ||
@@ -111,7 +114,10 @@ export class RecentPtyOutputBuffer {
     }
     const retained = this.live.read()
     const oldest = this.offset - retained.length
-    return retained.slice(Math.max(boundary.offset, oldest) - oldest)
+    return {
+      output: retained.slice(Math.max(boundary.offset, oldest) - oldest),
+      complete: boundary.offset >= oldest
+    }
   }
 
   read(): string {

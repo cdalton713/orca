@@ -20,14 +20,20 @@ describe('OrcaRuntimeService', () => {
     if (!outputBoundary) {
       throw new Error('Missing raw output boundary')
     }
-    expect(runtime.readTerminalOutputSince(terminal.handle, outputBoundary)).toEqual([''])
+    expect(runtime.readTerminalOutputSince(terminal.handle, outputBoundary)).toEqual({
+      output: [''],
+      complete: true
+    })
     runtime.onPtyData('pty-1', '\r\x1b[3', 101)
     runtime.onPtyData('pty-1', '2m>_ OpenAI Codex (new)\nError: account/read failed ', 102)
     runtime.onPtyData('pty-1', 'during TUI bootstrap: current failure\x1b[0m', 103)
-    expect(runtime.readTerminalOutputSince(terminal.handle, outputBoundary)).toEqual([
-      '\r>_ OpenAI Codex (new)',
-      'Error: account/read failed during TUI bootstrap: current failure'
-    ])
+    expect(runtime.readTerminalOutputSince(terminal.handle, outputBoundary)).toEqual({
+      output: [
+        '\r>_ OpenAI Codex (new)',
+        'Error: account/read failed during TUI bootstrap: current failure'
+      ],
+      complete: true
+    })
     const fresh = runtime.captureTerminalOutputBoundary(terminal.handle, true)
     expect(fresh?.offset).toBe(0)
   })
@@ -52,7 +58,10 @@ describe('OrcaRuntimeService', () => {
       '>_ OpenAI Codex (new)\nError: account/read failed during TUI bootstrap: current failure'
     runtime.onPtyData('pty-1', failure, 100)
     await runtime.serializeMainTerminalBuffer('pty-1', { scrollbackRows: 1000 })
-    expect(runtime.readTerminalOutputSince(terminal.handle, boundary)).toEqual(failure.split('\n'))
+    expect(runtime.readTerminalOutputSince(terminal.handle, boundary)).toEqual({
+      output: failure.split('\n'),
+      complete: true
+    })
   })
 
   it('trims oversized terminal output bursts without per-line array shifts', async () => {

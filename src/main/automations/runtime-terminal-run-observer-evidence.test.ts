@@ -35,7 +35,9 @@ function createPane(initial: { idle: boolean; tail: string[]; idleEdgeOnly?: boo
     readTerminal: async () => ({ tail }),
     readTerminalOutputSince: (_handle, boundary) => {
       const raw = output.readSince(boundary)
-      return raw === null ? null : normalizeTerminalChunk(raw).text.split('\n')
+      return raw === null
+        ? null
+        : { output: normalizeTerminalChunk(raw.output).text.split('\n'), complete: raw.complete }
     },
     waitForTerminal: (_handle, options) => {
       if (options?.signal?.aborted) {
@@ -161,6 +163,16 @@ describe('observing a run with agent evidence', () => {
     expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
   })
 
+  it('allows status-free completion after grace with a complete empty launch read', async () => {
+    const pane = createPane({ idle: true, tail: ['$'] })
+    const run = observe(pane, undefined, undefined, ['codex'], pane.boundary(false))
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS - 1_000)
+    expect(run.settled).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+  })
+
   it('waits when a saved boundary cannot be read by an older host', async () => {
     const pane = createPane({ idle: true, tail: codexBootstrapFailureTail })
     delete pane.runtime.readTerminalOutputSince
@@ -200,6 +212,21 @@ describe('observing a run with agent evidence', () => {
     expect(run.settled).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'dispatch_failed', errorCode: 'codexBootstrapFailed' })
     )
+  })
+
+  it('waits when live output evicts an earlier bootstrap failure, until fresh done', async () => {
+    const pane = createPane({ idle: true, tail: ['$'] })
+    const boundary = pane.boundary(false)
+    pane.output.append(`${codexBootstrapFailureTail.join('\n')}\n`)
+    pane.output.append('shell prompt noise\n'.repeat(4_000))
+    const run = observe(pane, undefined, undefined, ['codex'], boundary)
+    await vi.advanceTimersByTimeAsync(AGENT_START_GRACE_MS + 1_000)
+    expect(run.settled).not.toHaveBeenCalled()
+    expect(run.failed).not.toHaveBeenCalled()
+    pane.report()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await run.promise
+    expect(run.settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
   })
 
   it('reports a typed bootstrap failure after current-launch output rolls past retention', async () => {

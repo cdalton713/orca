@@ -47,7 +47,7 @@ describe('RecentPtyOutputBuffer', () => {
     buffer.append('new ')
     buffer.appendHistorical('old serialized failure')
     buffer.append('failure')
-    expect(buffer.readSince(boundary)).toBe('new failure')
+    expect(buffer.readSince(boundary)).toEqual({ output: 'new failure', complete: true })
     expect(buffer.read()).toBe('old failurenew old serialized failurefailure')
   })
 
@@ -60,28 +60,38 @@ describe('RecentPtyOutputBuffer', () => {
     for (let index = 0; index < 3; index += 1) {
       buffer.appendHistorical('historical snapshot')
       expect(buffer.read()).toBe('l snapshot')
-      expect(buffer.readSince(boundary)).toBe('failure')
+      expect(buffer.readSince(boundary)).toEqual({ output: 'failure', complete: true })
       expect(buffer.boundary()).toEqual(afterFailure)
     }
     buffer.append('12345678901')
     expect(buffer.read()).toBe('2345678901')
-    expect(buffer.readSince(boundary)).toBe('2345678901')
+    expect(buffer.readSince(boundary)).toEqual({ output: '2345678901', complete: false })
     const nextLaunch = buffer.boundary()
     buffer.appendHistorical('old failure')
-    expect(buffer.readSince(nextLaunch)).toBe('')
+    expect(buffer.readSince(nextLaunch)).toEqual({ output: '', complete: true })
     buffer.append('done')
-    expect(buffer.readSince(nextLaunch)).toBe('done')
+    expect(buffer.readSince(nextLaunch)).toEqual({ output: 'done', complete: true })
   })
 
   it('retains a proven newer suffix and refuses stale generations or invalid offsets', () => {
     const buffer = new RecentPtyOutputBuffer({ limit: 10 })
     const boundary = buffer.boundary()
     buffer.append('12345678901')
-    expect(buffer.readSince(boundary)).toBe('2345678901')
+    expect(buffer.readSince(boundary)).toEqual({ output: '2345678901', complete: false })
     expect(buffer.readSince(new RecentPtyOutputBuffer().boundary())).toBeNull()
     expect(buffer.readSince({ ...buffer.boundary(), offset: -1 })).toBeNull()
     expect(buffer.readSince({ ...buffer.boundary(), offset: 12 })).toBeNull()
-    expect(buffer.readSince(buffer.boundary())).toBe('')
+    expect(buffer.readSince(buffer.boundary())).toEqual({ output: '', complete: true })
+  })
+
+  it('keeps a launch read complete at the retention boundary until its first byte is evicted', () => {
+    const buffer = new RecentPtyOutputBuffer({ limit: 10 })
+    buffer.append('old')
+    const boundary = buffer.boundary()
+    buffer.append('1234567890')
+    expect(buffer.readSince(boundary)).toEqual({ output: '1234567890', complete: true })
+    buffer.append('1')
+    expect(buffer.readSince(boundary)).toEqual({ output: '2345678901', complete: false })
   })
 
   it('returns an empty string before any append', () => {

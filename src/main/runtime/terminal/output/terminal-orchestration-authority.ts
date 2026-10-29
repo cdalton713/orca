@@ -1,4 +1,7 @@
-import type { TerminalOutputBoundary } from '../../../../shared/runtime-terminal-contracts'
+import type {
+  TerminalOutputBoundary,
+  TerminalOutputSince
+} from '../../../../shared/runtime-terminal-contracts'
 import { normalizeTerminalChunk } from '../../terminal-ansi-normalization'
 import type { AgentStatusOrchestrationContext } from '../../../../shared/agent-status-types'
 import type { OrchestrationDb } from '../../orchestration/db/orchestration-db'
@@ -196,10 +199,15 @@ export abstract class OrcaRuntimeWithGetOrchestrationDispatchAuthority extends O
     return freshLaunch ? { ...boundary, offset: 0 } : boundary
   }
 
-  readTerminalOutputSince(handle: string, boundary: TerminalOutputBoundary): string[] | null {
+  readTerminalOutputSince(
+    handle: string,
+    boundary: TerminalOutputBoundary
+  ): TerminalOutputSince<string[]> | null {
     const ptyId = this.resolveLeafForHandle(handle)?.ptyId
     const raw = ptyId ? this.recentPtyOutputById.get(ptyId)?.readSince(boundary) : null
-    return raw == null ? null : normalizeTerminalChunk(raw).text.split(/\r?\n/)
+    return raw == null
+      ? null
+      : { output: normalizeTerminalChunk(raw.output).text.split(/\r?\n/), complete: raw.complete }
   }
 
   protected recordRecentPtyOutput(ptyId: string, data: string, historical = false): void {

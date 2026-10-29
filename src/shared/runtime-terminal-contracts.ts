@@ -198,6 +198,12 @@ export type RuntimeTerminalRowMetadata = {
   trailingSpaces: number
 }
 
+/** A bounded launch read; incomplete output retains only a suffix. */
+export type TerminalOutputSince<T> = {
+  output: T
+  complete: boolean
+}
+
 export type TerminalOutputBoundary = {
   generation: string
   offset: number
